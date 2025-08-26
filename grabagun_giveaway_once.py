@@ -29,7 +29,7 @@ HEADLESS = True
 
 # Optional persistent storage dir (keep cookies to reduce popups across runs)
 # Leave empty/None to use a fresh context per run (typical in cloud cron jobs).
-USER_DATA_DIR = os.getenv("GG_STORAGE_DIR")  # e.g., "/data/grabagun"
+# USER_DATA_DIR = os.getenv("GG_STORAGE_DIR")  # e.g., "/data/grabagun"
 
 def log(msg):
     print(f"[{datetime.now().isoformat(timespec='seconds')}] {msg}", flush=True)
@@ -172,4 +172,5 @@ def run_once():
 if __name__ == "__main__":
     # ⚠️ Respect the site’s Official Rules/ToS. Many promotions disallow automation.
     sys.exit(run_once())
+
 
