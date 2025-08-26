@@ -7,18 +7,25 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
 URL = "https://www.grabagun.com/giveaway"
 
+def required(name: str) -> str:
+    v = os.getenv(name)
+    if not v or not v.strip():
+        print(f"Missing required env var: {name}", file=sys.stderr)
+        sys.exit(2)
+    return v.strip()
+
 # --- Form data (override via env vars in your cloud host) ---
-FIRST_NAME = os.getenv("GG_FIRST_NAME", "Jeffrey")
-LAST_NAME  = os.getenv("GG_LAST_NAME", "Kintner")
-EMAIL      = os.getenv("GG_EMAIL", "jkintner25@gmail.com")
-PHONE      = os.getenv("GG_PHONE", "205-540-2072")
-STREET     = os.getenv("GG_STREET", "1622 13th St S Apt D")
-CITY       = os.getenv("GG_CITY", "Birmingham")
-STATE_LBL  = os.getenv("GG_STATE", "Alabama")  # selects by visible label
-ZIP        = os.getenv("GG_ZIP", "35205")
+FIRST_NAME = required("GG_FIRST_NAME")
+LAST_NAME  = required("GG_LAST_NAME")
+EMAIL      = required("GG_EMAIL")
+PHONE      = required("GG_PHONE")
+STREET     = required("GG_STREET")
+CITY       = required("GG_CITY")
+STATE_LBL  = required("GG_STATE")
+ZIP        = required("GG_ZIP")
 
 # Headless by default in cron/cloud; set GG_HEADLESS=false to watch it locally.
-HEADLESS = os.getenv("GG_HEADLESS", "true").lower() != "false"
+HEADLESS = True
 
 # Optional persistent storage dir (keep cookies to reduce popups across runs)
 # Leave empty/None to use a fresh context per run (typical in cloud cron jobs).
@@ -165,3 +172,4 @@ def run_once():
 if __name__ == "__main__":
     # ⚠️ Respect the site’s Official Rules/ToS. Many promotions disallow automation.
     sys.exit(run_once())
+
