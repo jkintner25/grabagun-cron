@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import os
 import sys
+import re
+from pathlib import Path
 from datetime import datetime
 from contextlib import suppress
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
@@ -112,7 +114,35 @@ def fill_and_submit(page):
     if not clicked:
         page.evaluate("""() => { const f = document.querySelector('form#giveaway_form'); if (f) f.submit(); }""")
 
+def verify_submission(page, timeout_ms=15000) -> bool:
+    # Success if we land on the success URL or see a "Thank you" message.
+    import re
+    from playwright.sync_api import TimeoutError as PWTimeoutError
+
+    # Prefer URL-based confirmation
+    try:
+        page.wait_for_url(re.compile(r"giveaway-success-entry"), timeout=timeout_ms)
+    except PWTimeoutError:
+        pass
+
+    if "giveaway-success-entry" in page.url:
+        return True
+
+    # Fallback: look for visible "Thank you" text
+    try:
+        page.get_by_text(re.compile(r"\bthank\s*you\b", re.I)).wait_for(
+            state="visible", timeout=2000
+        )
+        return True
+    except PWTimeoutError:
+        return False
+
+
 def run_once():
+    from contextlib import suppress
+    from pathlib import Path
+    from playwright.sync_api import sync_playwright
+
     with sync_playwright() as p:
         chromium = p.chromium
         args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
@@ -134,10 +164,27 @@ def run_once():
         try:
             log("Navigating to giveaway page…")
             page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+
             dismiss_popups(page)
             fill_and_submit(page)
-            page.wait_for_timeout(6000)
-            log("Submission attempt finished.")
+
+            log("Waiting for submission result…")
+            ok = verify_submission(page, timeout_ms=20000)
+
+            if ok:
+                log("✅ Success page detected (URL or Thank You text).")
+            else:
+                log("❌ Did not reach success confirmation. Capturing artifacts…")
+                try:
+                    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+                    Path("/app").mkdir(parents=True, exist_ok=True)
+                    page.screenshot(path=f"/app/failure-{ts}.png", full_page=True)
+                    with open(f"/app/failure-{ts}.html", "w", encoding="utf-8") as f:
+                        f.write(page.content())
+                    log(f"Saved /app/failure-{ts}.png and /app/failure-{ts}.html")
+                except Exception as e:
+                    log(f"Artifact capture failed: {e!r}")
+                exit_code = 2
         except Exception as e:
             log(f"ERROR: {e!r}")
             exit_code = 2
@@ -150,5 +197,6 @@ def run_once():
 
 if __name__ == "__main__":
     sys.exit(run_once())
+
 
 
