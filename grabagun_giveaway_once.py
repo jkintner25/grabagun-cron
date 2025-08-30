@@ -5,9 +5,6 @@ from datetime import datetime
 from contextlib import suppress
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
-import playwright
-print("Playwright Python version:", playwright.__version__, flush=True)
-
 URL = "https://www.grabagun.com/giveaway"
 
 # --- Form data from env (or defaults) ---
@@ -153,4 +150,5 @@ def run_once():
 
 if __name__ == "__main__":
     sys.exit(run_once())
+
 
