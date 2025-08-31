@@ -114,28 +114,72 @@ def fill_and_submit(page):
     if not clicked:
         page.evaluate("""() => { const f = document.querySelector('form#giveaway_form'); if (f) f.submit(); }""")
 
-def verify_submission(page, timeout_ms=15000) -> bool:
-    # Success if we land on the success URL or see a "Thank you" message.
+def verify_submission(page, total_timeout_ms=25000):
+    """
+    Returns one of: 'success', 'cooldown', 'unknown'
+    Success: success URL or clear thank-you text.
+    Cooldown: rate-limit text (already submitted / one entry per 6 hours).
+    Unknown: neither detected.
+    """
     import re
     from playwright.sync_api import TimeoutError as PWTimeoutError
 
-    # Prefer URL-based confirmation
+    # Patterns we consider success or cooldown
+    THANK_PATTERNS = [
+        r"\bthank\s*you\b",
+        r"\b(entry\s+submitted|entry\s+received)\b",
+        r"\bsuccess(?:fully)?\b",
+        r"\bgood\s*luck\b",
+    ]
+    COOLDOWN_PATTERNS = [
+        r"\balready\s+(?:entered|submitted)\b",
+        r"\bone\s+entry\s+per\b",
+        r"\blimit\s+one\s+entry\b",
+        r"\b(6|six)\s*hour\b",
+        r"\bper\s*6\s*hours\b",
+        r"\btoo\s+many\s+entries\b",
+    ]
+
+    def see_any(patterns, timeout_each=2500):
+        for pat in patterns:
+            try:
+                page.get_by_text(re.compile(pat, re.I)).wait_for(
+                    state="visible", timeout=timeout_each
+                )
+                return True
+            except PWTimeoutError:
+                continue
+        return False
+
+    # 1) Prefer URL-based confirmation (redirect)
     try:
-        page.wait_for_url(re.compile(r"giveaway-success-entry"), timeout=timeout_ms)
+        page.wait_for_url(re.compile(r"giveaway-success-entry"), timeout=10000)
     except PWTimeoutError:
         pass
-
     if "giveaway-success-entry" in page.url:
-        return True
+        return "success"
 
-    # Fallback: look for visible "Thank you" text
+    # 2) Watch the network for the form POST (XHR or navigation)
+    #    then give the DOM a beat to update and check messages.
     try:
-        page.get_by_text(re.compile(r"\bthank\s*you\b", re.I)).wait_for(
-            state="visible", timeout=2000
+        resp = page.wait_for_response(
+            lambda r: ("giveaway/index/submitEntry" in r.url) and (200 <= r.status < 400),
+            timeout=10000,
         )
-        return True
+        # small grace for DOM update after response
+        page.wait_for_timeout(1000)
     except PWTimeoutError:
-        return False
+        resp = None
+
+    # 3) Content-based checks (success)
+    if see_any(THANK_PATTERNS, timeout_each=2000):
+        return "success"
+
+    # 4) Content-based checks (cooldown / rate-limit)
+    if see_any(COOLDOWN_PATTERNS, timeout_each=2000):
+        return "cooldown"
+
+    return "unknown"
 
 
 def run_once():
@@ -147,7 +191,7 @@ def run_once():
         chromium = p.chromium
         args = ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
 
-        # Choose persistent or ephemeral context based on USER_DATA_DIR
+        # Choose persistent or ephemeral context
         if USER_DATA_DIR:
             context = chromium.launch_persistent_context(
                 USER_DATA_DIR,
@@ -160,7 +204,7 @@ def run_once():
             context = browser.new_context(viewport={"width": 1366, "height": 900})
 
         page = context.new_page()
-        exit_code = 0
+
         try:
             log("Navigating to giveaway page…")
             page.goto(URL, wait_until="domcontentloaded", timeout=45000)
@@ -169,34 +213,37 @@ def run_once():
             fill_and_submit(page)
 
             log("Waiting for submission result…")
-            ok = verify_submission(page, timeout_ms=20000)
+            status = verify_submission(page, total_timeout_ms=25000)
 
-            if ok:
-                log("✅ Success page detected (URL or Thank You text).")
+            if status == "success":
+                log("✅ Submission confirmed (success URL or thank-you text).")
+                return 0
+            elif status == "cooldown":
+                log("🟡 Already submitted within 6 hours — treating as success for cron.")
+                return 0
             else:
-                log("❌ Did not reach success confirmation. Capturing artifacts…")
-                try:
-                    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-                    Path("/app").mkdir(parents=True, exist_ok=True)
-                    page.screenshot(path=f"/app/failure-{ts}.png", full_page=True)
-                    with open(f"/app/failure-{ts}.html", "w", encoding="utf-8") as f:
-                        f.write(page.content())
-                    log(f"Saved /app/failure-{ts}.png and /app/failure-{ts}.html")
-                except Exception as e:
-                    log(f"Artifact capture failed: {e!r}")
-                exit_code = 2
+                log("❌ No clear confirmation. Capturing artifacts…")
+                ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+                Path("/app").mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=f"/app/failure-{ts}.png", full_page=True)
+                with open(f"/app/failure-{ts}.html", "w", encoding="utf-8") as f:
+                    f.write(page.content())
+                log(f"Saved /app/failure-{ts}.png and /app/failure-{ts}.html")
+                return 2
+
         except Exception as e:
             log(f"ERROR: {e!r}")
-            exit_code = 2
+            return 2
+
         finally:
             with suppress(Exception):
                 page.close()
             with suppress(Exception):
                 context.close()
-        return exit_code
 
 if __name__ == "__main__":
     sys.exit(run_once())
+
 
 
 
